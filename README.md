@@ -1,4 +1,4 @@
-# Safelight Print
+# Safelight Print (Beta)
 
 A **Print module** for [Safelight](https://github.com/anthonyreimche/SafeLight) (v2.6+). It adds a Print tab beside Library and Develop: lay out a page, preview the selection, and print through the OS dialog.
 
