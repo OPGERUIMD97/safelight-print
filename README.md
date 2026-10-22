@@ -38,6 +38,11 @@ Safelight 2.6.0 or newer is required.
 - Output sharpening for print is not applied here.
 - Preview uses a lighter long-edge than the print render so the tab stays responsive.
 
+## Changelog
+
+- **1.1.1**: Fixed blank pages when printing. The print frame now has a real size, photos are embedded inline and the dialog only opens after all images have loaded.
+- **1.1.0**: Initial release of the Print module.
+
 ## License
 
 MIT

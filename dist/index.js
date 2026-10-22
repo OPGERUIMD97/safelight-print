@@ -76,15 +76,67 @@ function createStore(initial) {
   };
 }
 
-function printHtmlInIframe(html) {
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("Could not read image"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function srcToDataUrl(src) {
+  if (!src) return "";
+  if (typeof src !== "string") {
+    if (src instanceof Blob) return blobToDataUrl(src);
+    return "";
+  }
+  if (src.startsWith("data:")) return src;
+  try {
+    const res = await fetch(src);
+    if (!res.ok) return src;
+    return blobToDataUrl(await res.blob());
+  } catch {
+    return src;
+  }
+}
+
+function waitForImages(doc) {
+  const imgs = Array.from(doc.images || []);
+  return Promise.all(imgs.map(img => new Promise(resolve => {
+    const done = () => resolve();
+    if (img.complete && img.naturalWidth > 0) {
+      if (typeof img.decode === "function") img.decode().then(done, done);
+      else done();
+      return;
+    }
+    img.addEventListener("load", () => {
+      if (typeof img.decode === "function") img.decode().then(done, done);
+      else done();
+    }, { once: true });
+    img.addEventListener("error", done, { once: true });
+  })));
+}
+
+async function printHtmlInIframe(html) {
   const existing = document.getElementById(PRINT_FRAME_ID);
   if (existing) existing.remove();
 
   const iframe = document.createElement("iframe");
   iframe.id = PRINT_FRAME_ID;
   iframe.setAttribute("aria-hidden", "true");
-  iframe.style.cssText =
-    "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;pointer-events:none;";
+  // Must have a real layout box: 0×0 / visibility:hidden prints a blank page in Electron.
+  iframe.style.cssText = [
+    "position:fixed",
+    "left:0",
+    "top:0",
+    "width:800px",
+    "height:1100px",
+    "border:0",
+    "opacity:0",
+    "pointer-events:none",
+    "z-index:-1",
+  ].join(";");
   document.body.appendChild(iframe);
 
   const win = iframe.contentWindow;
@@ -97,6 +149,9 @@ function printHtmlInIframe(html) {
   doc.open();
   doc.write(html);
   doc.close();
+
+  await waitForImages(doc);
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
   const cleanup = () => {
     const el = document.getElementById(PRINT_FRAME_ID);
@@ -152,23 +207,28 @@ function buildPrintDocument({ pageW, pageH, marginMm, cols, rows, pages, fitMode
       gap: 2mm;
     }
     .sl-cell {
+      position: relative;
       min-width: 0; min-height: 0;
-      display: flex; flex-direction: column;
       overflow: hidden;
     }
-    .sl-cell img {
-      flex: 1; min-height: 0; width: 100%;
+    .sl-cell img, .sl-placeholder {
+      position: absolute;
+      inset: 0 0 ${showCaptions ? "10pt" : "0"} 0;
+      width: 100%;
+      height: 100%;
       object-fit: ${fit};
       display: block;
     }
     .sl-placeholder {
-      flex: 1; background: #eee; color: #999;
+      background: #eee; color: #999;
       display: flex; align-items: center; justify-content: center;
       font: 10pt system-ui, sans-serif;
     }
     .sl-caption {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      height: 9pt;
       font: 7pt system-ui, sans-serif; color: #555;
-      margin-top: 1mm; text-align: center;
+      text-align: center;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .sl-empty { visibility: hidden; }
@@ -336,18 +396,16 @@ export function activate(api) {
         { format: "image/jpeg", quality: 0.92, longEdge },
         onProgress
       );
-      return results.map(r => {
-        const src = r.blob
-          ? URL.createObjectURL(r.blob)
-          : (r.photo && r.photo.thumbnailUrl) || "";
-        return { photo: r.photo, src, revoke: !!r.blob };
-      });
+      return Promise.all(results.map(async r => {
+        const raw = r.blob || (r.photo && r.photo.thumbnailUrl) || "";
+        const src = await srcToDataUrl(raw);
+        return { photo: r.photo, src };
+      }));
     }
-    return photos.map(photo => ({
+    return Promise.all(photos.map(async photo => ({
       photo,
-      src: photo.thumbnailUrl || "",
-      revoke: false,
-    }));
+      src: await srcToDataUrl(photo.thumbnailUrl || ""),
+    })));
   }
 
   function Field({ label, children }) {
@@ -644,17 +702,12 @@ export function activate(api) {
           pages, fitMode: s.fitMode,
           showCaptions: s.showFilename || s.showDate,
         });
-        printHtmlInIframe(html);
+        await printHtmlInIframe(html);
       } catch (err) {
         console.error("[safelight-print]", err);
         alert(`Print error: ${err.message || err}`);
       } finally {
         setPrinting(false);
-        setTimeout(() => {
-          rendered.forEach(item => {
-            if (item.revoke && item.src) URL.revokeObjectURL(item.src);
-          });
-        }, 120000);
       }
     }, [photos, printEdge, perPage, pageW, pageH, s, lay]);
 
@@ -789,7 +842,7 @@ export function activate(api) {
             caption: captionFor(item.photo, s.showFilename, s.showDate),
           })));
         }
-        printHtmlInIframe(buildPrintDocument({
+        await printHtmlInIframe(buildPrintDocument({
           pageW, pageH, marginMm: s.marginMm,
           cols: lay.cols, rows: lay.rows,
           pages, fitMode: s.fitMode,
@@ -800,11 +853,6 @@ export function activate(api) {
         alert(`Print error: ${err.message || err}`);
       } finally {
         setPrinting(false);
-        setTimeout(() => {
-          rendered.forEach(item => {
-            if (item.revoke && item.src) URL.revokeObjectURL(item.src);
-          });
-        }, 120000);
       }
     }, [photos, printEdge, perPage, pageW, pageH, s, lay]);
 

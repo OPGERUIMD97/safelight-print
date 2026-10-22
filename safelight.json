@@ -1,7 +1,7 @@
 {
   "id": "safelight-print",
   "name": "Print",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Print module — page preview, multi-photo layouts, contact sheet, and OS printing from the develop pipeline.",
   "author": "OPGERUIMD97",
   "main": "dist/index.js",
